@@ -1,0 +1,18 @@
+# Node / React
+node_modules/
+dist/
+.env
+
+# Go
+/go-collab/go-collab
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# IDEs and OS files
+.vscode/
+.DS_Store
