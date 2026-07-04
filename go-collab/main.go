@@ -5,6 +5,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -231,8 +232,12 @@ func main() {
 		serveWs(hub, w, r)
 	})
 
-	log.Println("🚀 Go WebSocket Server with Live Share started on :8080")
-	err := http.ListenAndServe(":8080", nil)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Println("🚀 Go WebSocket Server with Live Share started on :" + port)
+	err := http.ListenAndServe(":" + port, nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}

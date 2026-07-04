@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Files, Search, GitBranch, Play, Settings, ChevronRight, FileCode, X, Code2,
-  CheckCircle2, AlertCircle, Layout, FileEdit, FileText, FolderOpen, FilePlus, FolderPlus, RefreshCw, Copy, Trash2, Edit2, Pin, PinOff, AlignLeft, Download, Sparkles, Bot, Upload, CloudUpload
+  CheckCircle2, AlertCircle, Layout, FileEdit, FileText, FolderOpen, FilePlus, FolderPlus, RefreshCw, Copy, Trash2, Edit2, Pin, PinOff, AlignLeft, Download, Sparkles, Bot, CloudUpload
 } from 'lucide-react';
 import { ChatPanel } from './components/ai/ChatPanel';
 import { Auth } from './components/Auth';
@@ -28,6 +28,9 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import * as htmlDocx from 'html-docx-js-typescript';
 import { get, set } from 'idb-keyval';
+
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
+const WS_BASE_URL = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8080/ws';
 
 
 const Mermaid = ({ chart, theme }: { chart: string, theme: string }) => {
@@ -330,7 +333,7 @@ function App() {
     let reconnectTimer: NodeJS.Timeout;
 
     const connectWs = () => {
-      ws = new WebSocket('ws://localhost:8080/ws');
+      ws = new WebSocket(WS_BASE_URL);
       
       ws.onopen = () => console.log('🔗 Connected to Go Collaboration Server!');
 
@@ -461,7 +464,7 @@ function App() {
     const token = authToken || localStorage.getItem('token');
     if (token) {
       try {
-        const res = await fetch('http://localhost:3001/api/files/save', {
+        const res = await fetch(`${API_BASE_URL}/api/files/save`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -486,7 +489,7 @@ function App() {
   // Fetch user's files from cloud on login
   const fetchUserFiles = async (token: string) => {
     try {
-      const res = await fetch('http://localhost:3001/api/files', {
+      const res = await fetch(`${API_BASE_URL}/api/files`, {
         headers: { 'Authorization': `Bearer ${token}` },
       });
       if (!res.ok) return;
@@ -502,7 +505,7 @@ function App() {
     const token = authToken || localStorage.getItem('token');
     if (!token) return;
     try {
-      const res = await fetch(`http://localhost:3001/api/files/${fileId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/files/${fileId}`, {
         headers: { 'Authorization': `Bearer ${token}` },
       });
       if (!res.ok) return;
@@ -970,7 +973,7 @@ function App() {
     let successCount = 0;
     for (const f of allFiles) {
       try {
-        const res = await fetch('http://localhost:3001/api/files/save', {
+        const res = await fetch(`${API_BASE_URL}/api/files/save`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1354,7 +1357,7 @@ function App() {
     try {
       // 1. Get presigned URL from backend
       const token = authToken || localStorage.getItem('token');
-      const response = await fetch('http://localhost:3001/api/upload-url', {
+      const response = await fetch(`${API_BASE_URL}/api/upload-url`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
         body: JSON.stringify({ fileName: file.name, fileType: file.type })
@@ -1408,7 +1411,7 @@ function App() {
     try {
       // 1. Get presigned URL from backend
       const token = authToken || localStorage.getItem('token');
-      const response = await fetch('http://localhost:3001/api/upload-url', {
+      const response = await fetch(`${API_BASE_URL}/api/upload-url`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
         body: JSON.stringify({ fileName: file.name, fileType: file.type })

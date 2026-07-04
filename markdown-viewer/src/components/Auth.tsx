@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useGoogleLogin } from '@react-oauth/google';
 import '../styles/auth.css';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
+
 interface AuthProps {
   onLogin: (userData: { id: string; name: string; email: string; token: string }) => void;
 }
@@ -23,7 +25,7 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
     const payload = isLogin ? { email, password } : { name, email, password };
 
     try {
-      const response = await fetch(`http://localhost:3001${endpoint}`, {
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -56,7 +58,7 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
           headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
         }).then(res => res.json());
 
-        const response = await fetch('http://localhost:3001/api/google-login', {
+        const response = await fetch(`${API_BASE_URL}/api/google-login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

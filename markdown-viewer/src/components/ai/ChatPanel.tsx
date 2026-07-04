@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Sparkles, Loader2, X, RefreshCw } from 'lucide-react';
+import { Send, Bot, User, Sparkles, Loader2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { askAI, AIAction } from '../../services/ai';
@@ -17,7 +17,7 @@ type ChatPanelProps = {
   onApplyChange?: (content: string) => void;
 };
 
-export const ChatPanel: React.FC<ChatPanelProps> = ({ onClose, documentContent, onApplyChange }) => {
+export const ChatPanel: React.FC<ChatPanelProps> = ({ onClose, documentContent, onApplyChange: _onApplyChange }) => {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',

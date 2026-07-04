@@ -1,6 +1,6 @@
 export type AIAction = 'summary' | 'explain' | 'improve' | 'grammar' | 'translate' | 'toc' | 'mermaid' | 'markdown' | 'chat';
 
-export async function askAI(action: AIAction, text: string, context?: string): Promise<string> {
+export async function askAI(action: AIAction, text: string, _context?: string): Promise<string> {
   // Simulate network delay
   await new Promise(resolve => setTimeout(resolve, 1500));
 
