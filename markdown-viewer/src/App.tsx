@@ -494,7 +494,13 @@ function App() {
       });
       if (!res.ok) return;
       const data = await res.json();
-      setCloudFiles(data.files || []);
+      // Map MongoDB _id to id for consistent frontend usage
+      const mapped = (data.files || []).map((f: any) => ({
+        id: f._id || f.id,
+        fileName: f.fileName,
+        lastModified: f.lastModified || f.updatedAt,
+      }));
+      setCloudFiles(mapped);
     } catch (err) {
       console.error('Failed to fetch cloud files:', err);
     }
@@ -503,18 +509,34 @@ function App() {
   // Open a cloud file by fetching its content from B2
   const openCloudFile = async (fileId: string, fileName: string) => {
     const token = authToken || localStorage.getItem('token');
-    if (!token) return;
+    if (!token) {
+      console.error('No auth token — cannot open cloud file');
+      return;
+    }
+    // If this file is already open, just switch to it
+    const existingId = `cloud-${fileId}`;
+    const alreadyOpen = openFiles.find(f => f.id === existingId);
+    if (alreadyOpen) {
+      setActiveFileId(existingId);
+      return;
+    }
     try {
       const res = await fetch(`${API_BASE_URL}/api/files/${fileId}`, {
         headers: { 'Authorization': `Bearer ${token}` },
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        console.error('Failed to fetch cloud file:', res.status, errData);
+        alert(`Failed to open cloud file: ${errData.error || res.statusText}`);
+        return;
+      }
       const data = await res.json();
+      const content = data.file?.content ?? data.content ?? '';
       const cloudNode: FileNode = {
-        id: `cloud-${fileId}`,
+        id: existingId,
         name: fileName,
         type: 'file',
-        content: data.file.content,
+        content,
       };
       setOpenFiles(prev => {
         if (prev.find(f => f.id === cloudNode.id)) return prev;
@@ -523,6 +545,7 @@ function App() {
       setActiveFileId(cloudNode.id);
     } catch (err) {
       console.error('Failed to open cloud file:', err);
+      alert('Network error opening cloud file. Check your connection.');
     }
   };
 
