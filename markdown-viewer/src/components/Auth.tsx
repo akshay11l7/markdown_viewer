@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
+import { useGoogleLogin } from '@react-oauth/google';
 import '../styles/auth.css';
 
 interface AuthProps {
-  onLogin: () => void;
+  onLogin: (userData: { id: string; name: string; email: string; token: string }) => void;
 }
 
 export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
@@ -38,7 +39,7 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       
-      onLogin();
+      onLogin({ ...data.user, token: data.token });
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -46,39 +47,42 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
     }
   };
 
-  const handleGoogleLogin = async () => {
-    setError('');
-    setLoading(true);
-    
-    // Simulate getting Google profile
-    const mockGoogleProfile = {
-      name: 'Google User',
-      email: 'user@google.com'
-    };
+  const handleGoogleLogin = useGoogleLogin({
+    onSuccess: async (tokenResponse) => {
+      setError('');
+      setLoading(true);
+      try {
+        const userInfo = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+        }).then(res => res.json());
 
-    try {
-      const response = await fetch('http://localhost:3001/api/google-login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(mockGoogleProfile)
-      });
+        const response = await fetch('http://localhost:3001/api/google-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: userInfo.email,
+            name: userInfo.name
+          })
+        });
 
-      const data = await response.json();
+        const data = await response.json();
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Google login failed');
+        if (!response.ok) {
+          throw new Error(data.error || 'Google login failed');
+        }
+
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('user', JSON.stringify(data.user));
+        
+        onLogin({ ...data.user, token: data.token });
+      } catch (err: any) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
       }
-
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      
-      onLogin();
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+    },
+    onError: () => setError('Google Login Failed'),
+  });
 
   return (
     <div className="auth-container">
@@ -171,7 +175,7 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
 
           <div className="divider">or continue with</div>
 
-          <button type="button" className="social-btn" onClick={handleGoogleLogin} disabled={loading}>
+          <button type="button" className="social-btn" onClick={() => handleGoogleLogin()} disabled={loading}>
             <svg className="google-icon" viewBox="0 0 24 24">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
               <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>

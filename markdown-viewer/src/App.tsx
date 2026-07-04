@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Files, Search, GitBranch, Play, Settings, ChevronRight, FileCode, X, Code2,
-  CheckCircle2, AlertCircle, Layout, FileEdit, FileText, FolderOpen, FilePlus, FolderPlus, RefreshCw, Copy, Trash2, Edit2, Pin, PinOff, AlignLeft, Download, Sparkles, Bot
+  CheckCircle2, AlertCircle, Layout, FileEdit, FileText, FolderOpen, FilePlus, FolderPlus, RefreshCw, Copy, Trash2, Edit2, Pin, PinOff, AlignLeft, Download, Sparkles, Bot, Upload, CloudUpload
 } from 'lucide-react';
 import { ChatPanel } from './components/ai/ChatPanel';
 import { Auth } from './components/Auth';
@@ -111,23 +111,7 @@ type FileNode = {
   isPinned?: boolean;
 };
 
-const initialFiles: FileNode[] = [
-  {
-    id: "welcome",
-    name: "Welcome",
-    type: "folder",
-    parentId: null,
-    children: [
-      {
-        id: "readme.md",
-        name: "README.md",
-        type: "file",
-        parentId: "welcome",
-        content: "# Welcome to Markdown Viewer\n\nClick **Open Folder** above to view your local files.\n\nUse `Ctrl+S` to save changes to disk.",
-      }
-    ]
-  }
-];
+const initialFiles: FileNode[] = [];
 
 type InlineInputState = 
   | { type: 'new-file' | 'new-folder', targetFolderId: string, targetHandle: any }
@@ -275,6 +259,8 @@ type WorkspaceData = {
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [cloudFiles, setCloudFiles] = useState<{id: string, fileName: string, lastModified: string}[]>([]);
   const [workspaces, setWorkspaces] = useState<WorkspaceData[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
   const [showWorkspaceMenu, setShowWorkspaceMenu] = useState(false);
@@ -458,15 +444,82 @@ function App() {
   const isResizing = useRef(false);
 
   const saveFile = async (fileNode: FileNode) => {
-    if (!fileNode.handle) return false;
+    let localSaved = false;
+    // Save locally if file handle exists
+    if (fileNode.handle) {
+      try {
+        const writable = await fileNode.handle.createWritable();
+        await writable.write(fileNode.content || '');
+        await writable.close();
+        localSaved = true;
+      } catch (err) {
+        console.error('Local save failed:', err);
+      }
+    }
+
+    // Also save to cloud (B2 via backend)
+    const token = authToken || localStorage.getItem('token');
+    if (token) {
+      try {
+        const res = await fetch('http://localhost:3001/api/files/save', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ fileName: fileNode.name, content: fileNode.content || '' }),
+        });
+        if (!res.ok) {
+          const errData = await res.json();
+          console.error('Cloud save failed:', errData.error);
+        } else {
+          console.log(`☁️ Saved ${fileNode.name} to cloud`);
+        }
+      } catch (err) {
+        console.error('Cloud save error:', err);
+      }
+    }
+
+    return localSaved || !!token;
+  };
+
+  // Fetch user's files from cloud on login
+  const fetchUserFiles = async (token: string) => {
     try {
-      const writable = await fileNode.handle.createWritable();
-      await writable.write(fileNode.content || '');
-      await writable.close();
-      return true;
+      const res = await fetch('http://localhost:3001/api/files', {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setCloudFiles(data.files || []);
     } catch (err) {
-      console.error('Save failed:', err);
-      return false;
+      console.error('Failed to fetch cloud files:', err);
+    }
+  };
+
+  // Open a cloud file by fetching its content from B2
+  const openCloudFile = async (fileId: string, fileName: string) => {
+    const token = authToken || localStorage.getItem('token');
+    if (!token) return;
+    try {
+      const res = await fetch(`http://localhost:3001/api/files/${fileId}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const cloudNode: FileNode = {
+        id: `cloud-${fileId}`,
+        name: fileName,
+        type: 'file',
+        content: data.file.content,
+      };
+      setOpenFiles(prev => {
+        if (prev.find(f => f.id === cloudNode.id)) return prev;
+        return [...prev, cloudNode];
+      });
+      setActiveFileId(cloudNode.id);
+    } catch (err) {
+      console.error('Failed to open cloud file:', err);
     }
   };
 
@@ -568,20 +621,16 @@ function App() {
   }, []);
 
   useEffect(() => {
-    // Load workspaces
+    // Load workspaces — filter out empty ones leftover from old defaults
     get('md-viewer-workspaces').then((data: any) => {
       if (data && Array.isArray(data)) {
-        setWorkspaces(data);
-      } else {
-        const defaultWorkspaces: WorkspaceData[] = [
-          { id: 'ws-1', name: 'Documentation', folderHandles: [], favoriteFiles: [], settings: {} },
-          { id: 'ws-2', name: 'Projects', folderHandles: [], favoriteFiles: [], settings: {} },
-          { id: 'ws-3', name: 'Notes', folderHandles: [], favoriteFiles: [], settings: {} },
-          { id: 'ws-4', name: 'Research', folderHandles: [], favoriteFiles: [], settings: {} },
-        ];
-        setWorkspaces(defaultWorkspaces);
-        set('md-viewer-workspaces', defaultWorkspaces);
+        const validWorkspaces = data.filter((ws: any) => ws.folderHandles && ws.folderHandles.length > 0);
+        setWorkspaces(validWorkspaces);
+        if (validWorkspaces.length !== data.length) {
+          set('md-viewer-workspaces', validWorkspaces); // Clean up stale entries
+        }
       }
+      // No default workspaces — start clean
     });
     
     get('md-viewer-active-ws').then((wsId: any) => {
@@ -598,7 +647,7 @@ function App() {
       if (ws && ws.folderHandles.length > 0) {
         refreshWorkspaceFolders(ws.folderHandles);
       } else {
-        setFiles(initialFiles);
+        setFiles([]);
       }
     }
   }, [activeWorkspaceId, workspaces]);
@@ -798,7 +847,7 @@ function App() {
       } else {
         // Fallback for no workspace
         setRootDirHandle(dirHandle);
-        setRootDirName(dirHandle.name.toUpperCase());
+        setRootDirName(dirHandle.name);
         setSelectedNodeId(dirHandle.name);
         const rootNode = await buildFileTree(dirHandle);
         setFiles(rootNode.children || []);
@@ -824,6 +873,14 @@ function App() {
     let handle = rootDirHandleRef.current;
     let folderId = rootDirHandleRef.current?.name; // default to root
 
+    if (!handle && activeWorkspaceId) {
+      const ws = workspaces.find(w => w.id === activeWorkspaceId);
+      if (ws && ws.folderHandles.length > 0) {
+        handle = ws.folderHandles[0];
+        folderId = ws.folderHandles[0].name;
+      }
+    }
+
     if (selectedNodeId && selectedNodeId !== folderId) {
       const node = findNodeById(files, selectedNodeId);
       if (node) {
@@ -840,37 +897,96 @@ function App() {
   };
 
   const handleCreateFile = async () => {
-    let handle = rootDirHandleRef.current;
-    if (!handle) {
-      try {
-        handle = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
-        setRootDirHandle(handle);
-        setRootDirName(handle.name.toUpperCase());
-        setSelectedNodeId(handle.name);
-        await refreshFolder(handle);
-      } catch (err) {
-        return;
-      }
-    }
     const target = getTargetFolder();
+    
+    if (!target.handle) {
+      // No folder loaded — create a virtual untitled file directly in editor
+      const untitledId = `untitled-${Date.now()}`;
+      const untitledFile: FileNode = {
+        id: untitledId,
+        name: `Untitled.md`,
+        type: 'file',
+        content: '',
+        isDirty: true,
+      };
+      setOpenFiles(prev => [...prev, untitledFile]);
+      setActiveFileId(untitledId);
+      return;
+    }
     setInlineInput({ type: 'new-file', targetFolderId: target.folderId, targetHandle: target.handle });
   };
 
   const handleCreateFolder = async () => {
-    let handle = rootDirHandleRef.current;
-    if (!handle) {
-      try {
-        handle = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
-        setRootDirHandle(handle);
-        setRootDirName(handle.name.toUpperCase());
-        setSelectedNodeId(handle.name);
-        await refreshFolder(handle);
-      } catch (err) {
-        return;
+    const target = getTargetFolder();
+    
+    if (!target.handle) {
+      alert('Please import a folder first before creating subfolders.');
+      return;
+    }
+    setInlineInput({ type: 'new-folder', targetFolderId: target.folderId, targetHandle: target.handle });
+  };
+
+  // Upload all open files in the workspace to B2 cloud
+  const handleUploadToCloud = async () => {
+    const token = authToken || localStorage.getItem('token');
+    if (!token) {
+      alert('Please log in to upload files to cloud.');
+      return;
+    }
+
+    // Collect all markdown files from the explorer tree
+    const collectFiles = async (nodes: FileNode[]): Promise<{name: string, content: string}[]> => {
+      const result: {name: string, content: string}[] = [];
+      for (const node of nodes) {
+        if (node.type === 'file' && node.handle) {
+          try {
+            const file = await node.handle.getFile();
+            const content = await file.text();
+            result.push({ name: node.name, content });
+          } catch (e) {
+            console.error('Failed to read', node.name);
+          }
+        } else if (node.children) {
+          const childFiles = await collectFiles(node.children);
+          result.push(...childFiles);
+        }
+      }
+      return result;
+    };
+
+    // Also include open files that have no handle (untitled / virtual)
+    const allFiles = await collectFiles(files);
+    for (const of_ of openFiles) {
+      if (!of_.handle && of_.content !== undefined) {
+        allFiles.push({ name: of_.name, content: of_.content });
       }
     }
-    const target = getTargetFolder();
-    setInlineInput({ type: 'new-folder', targetFolderId: target.folderId, targetHandle: target.handle });
+
+    if (allFiles.length === 0) {
+      alert('No files to upload.');
+      return;
+    }
+
+    let successCount = 0;
+    for (const f of allFiles) {
+      try {
+        const res = await fetch('http://localhost:3001/api/files/save', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ fileName: f.name, content: f.content }),
+        });
+        if (res.ok) successCount++;
+      } catch (err) {
+        console.error('Upload failed for', f.name, err);
+      }
+    }
+    
+    alert(`☁️ Uploaded ${successCount} / ${allFiles.length} files to cloud.`);
+    // Refresh cloud files list
+    fetchUserFiles(token);
   };
 
   const handleRename = (node: FileNode) => {
@@ -1228,6 +1344,108 @@ function App() {
     }
   };
 
+  const handleEditorDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (!e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+    
+    const file = e.dataTransfer.files[0];
+    if (!file.type.startsWith('image/')) return;
+    
+    try {
+      // 1. Get presigned URL from backend
+      const token = authToken || localStorage.getItem('token');
+      const response = await fetch('http://localhost:3001/api/upload-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ fileName: file.name, fileType: file.type })
+      });
+      const data = await response.json();
+      if (!data.uploadUrl) throw new Error(data.error || 'Failed to get upload URL');
+      
+      // 2. Upload file to Backblaze using the presigned URL
+      const uploadRes = await fetch(data.uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type },
+        body: file
+      });
+      if (!uploadRes.ok) throw new Error('Upload to S3/B2 failed');
+      
+      // 3. Insert markdown image tag at current cursor
+      if (editorRef.current) {
+        const position = editorRef.current.getPosition();
+        if (position) {
+          editorRef.current.executeEdits('image-upload', [{
+            range: {
+              startLineNumber: position.lineNumber,
+              startColumn: position.column,
+              endLineNumber: position.lineNumber,
+              endColumn: position.column
+            },
+            text: `![${file.name}](${data.fileUrl})\n`,
+            forceMoveMarkers: true
+          }]);
+        }
+      }
+    } catch (error) {
+      console.error('Upload failed:', error);
+      alert('Failed to upload image. Make sure backend is running and Backblaze credentials are set in .env.');
+    }
+  };
+
+  const handleEditorDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+  };
+
+  const handleEditorPaste = async (e: React.ClipboardEvent<HTMLDivElement>) => {
+    if (!e.clipboardData.files || e.clipboardData.files.length === 0) return;
+    
+    const file = e.clipboardData.files[0];
+    if (!file.type.startsWith('image/')) return;
+    
+    e.preventDefault();
+    e.stopPropagation();
+    
+    try {
+      // 1. Get presigned URL from backend
+      const token = authToken || localStorage.getItem('token');
+      const response = await fetch('http://localhost:3001/api/upload-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ fileName: file.name, fileType: file.type })
+      });
+      const data = await response.json();
+      if (!data.uploadUrl) throw new Error(data.error || 'Failed to get upload URL');
+      
+      // 2. Upload file to Backblaze using the presigned URL
+      const uploadRes = await fetch(data.uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type },
+        body: file
+      });
+      if (!uploadRes.ok) throw new Error('Upload to S3/B2 failed');
+      
+      // 3. Insert markdown image tag at current cursor
+      if (editorRef.current) {
+        const position = editorRef.current.getPosition();
+        if (position) {
+          editorRef.current.executeEdits('image-upload', [{
+            range: {
+              startLineNumber: position.lineNumber,
+              startColumn: position.column,
+              endLineNumber: position.lineNumber,
+              endColumn: position.column
+            },
+            text: `![${file.name}](${data.fileUrl})\n`,
+            forceMoveMarkers: true
+          }]);
+        }
+      }
+    } catch (error) {
+      console.error('Upload failed:', error);
+      alert('Failed to upload image. Make sure backend is running and Backblaze credentials are set in .env.');
+    }
+  };
+
   const startResizing = useCallback(() => {
     isResizing.current = true;
     const handleMouseMove = (mouseMoveEvent: MouseEvent) => {
@@ -1312,7 +1530,11 @@ function App() {
   });
 
   if (!isLoggedIn) {
-    return <Auth onLogin={() => setIsLoggedIn(true)} />;
+    return <Auth onLogin={(userData) => {
+      setIsLoggedIn(true);
+      setAuthToken(userData.token);
+      fetchUserFiles(userData.token);
+    }} />;
   }
 
   return (
@@ -1375,17 +1597,17 @@ function App() {
                           </div>
                         ))}
                         <div style={{ borderTop: '1px solid var(--color-border)', margin: '4px 0' }}></div>
-                        <div className="context-menu-item" onClick={() => { setShowWorkspaceSettings(true); setShowWorkspaceMenu(false); }}>
+                        <div className="context-menu-item" onClick={(e) => { e.stopPropagation(); setShowWorkspaceSettings(true); setShowWorkspaceMenu(false); }}>
                           <Settings size={14} style={{ display: 'inline', marginRight: '8px' }} /> Workspace Settings
                         </div>
-                        <div className="context-menu-item" onClick={() => { handleCreateWorkspace(); setShowWorkspaceMenu(false); }}>
+                        <div className="context-menu-item" onClick={(e) => { e.stopPropagation(); handleCreateWorkspace(); setShowWorkspaceMenu(false); }}>
                           <FilePlus size={14} style={{ display: 'inline', marginRight: '8px' }} /> New Workspace
                         </div>
                       </div>
                     )}
                   </div>
                   <div style={{ display: 'flex', gap: '2px' }}>
-                    <button title="Open Folder / Add to Workspace" onClick={handleOpenFolder} className="explorer-action-btn">
+                    <button title="Import Folder" onClick={handleOpenFolder} className="explorer-action-btn">
                       <FolderOpen size={14} />
                     </button>
                     <button title="New File" onClick={handleCreateFile} className="explorer-action-btn">
@@ -1393,6 +1615,9 @@ function App() {
                     </button>
                     <button title="New Folder" onClick={handleCreateFolder} className="explorer-action-btn">
                       <FolderPlus size={14} />
+                    </button>
+                    <button title="Upload All to Cloud" onClick={handleUploadToCloud} className="explorer-action-btn" style={{ color: '#58a6ff' }}>
+                      <CloudUpload size={14} />
                     </button>
                     <button title="Refresh" onClick={() => refreshFolder()} className="explorer-action-btn">
                       <RefreshCw size={14} />
@@ -1647,17 +1872,22 @@ function App() {
                     </button>
                     {showExportMenu && (
                       <div className="context-menu" style={{ top: '100%', right: 0, marginTop: '4px', position: 'absolute', zIndex: 1000 }}>
-                        <div className="context-menu-item" onClick={() => handleExport('pdf')}>PDF Document (.pdf)</div>
-                        <div className="context-menu-item" onClick={() => handleExport('html')}>HTML Page (.html)</div>
-                        <div className="context-menu-item" onClick={() => handleExport('docx')}>Word Document (.docx)</div>
-                        <div className="context-menu-item" onClick={() => handleExport('txt')}>Plain Text (.txt)</div>
-                        <div className="context-menu-item" onClick={() => handleExport('json')}>AST JSON (.json)</div>
+                        <div className="context-menu-item" onClick={(e) => { e.stopPropagation(); handleExport('pdf'); }}>PDF Document (.pdf)</div>
+                        <div className="context-menu-item" onClick={(e) => { e.stopPropagation(); handleExport('html'); }}>HTML Page (.html)</div>
+                        <div className="context-menu-item" onClick={(e) => { e.stopPropagation(); handleExport('docx'); }}>Word Document (.docx)</div>
+                        <div className="context-menu-item" onClick={(e) => { e.stopPropagation(); handleExport('txt'); }}>Plain Text (.txt)</div>
+                        <div className="context-menu-item" onClick={(e) => { e.stopPropagation(); handleExport('json'); }}>AST JSON (.json)</div>
                       </div>
                     )}
                   </div>
                 </div>
               </div>
-              <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+              <div 
+                style={{ flex: 1, display: 'flex', overflow: 'hidden' }}
+                onDrop={handleEditorDrop}
+                onDragOver={handleEditorDragOver}
+                onPasteCapture={handleEditorPaste}
+              >
                 <PanelGroup orientation="horizontal">
                   {viewMode !== 'preview' && (
                     <Panel defaultSize={50} minSize={20}>
@@ -1735,7 +1965,11 @@ function App() {
                 <div>
                   <div style={{ color: 'var(--color-text-primary)', marginBottom: '16px', fontWeight: '500' }}>Start</div>
                   <div className="empty-editor-shortcut">
-                    <span>Open Folder</span>
+                    <span>New File</span>
+                    <span className="kbd" onClick={handleCreateFile} style={{ cursor: 'pointer' }}>Click Here</span>
+                  </div>
+                  <div className="empty-editor-shortcut">
+                    <span>Import Folder</span>
                     <span className="kbd" onClick={handleOpenFolder} style={{ cursor: 'pointer' }}>Click Here</span>
                   </div>
                   <div className="empty-editor-shortcut">
@@ -1762,6 +1996,19 @@ function App() {
                     {recentFiles.slice(0, 5).map(f => (
                        <div key={f.id} onClick={() => handleFileClick(f)} style={{ cursor: 'pointer', padding: '6px 0', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-text-secondary)' }} className="recent-file-item">
                          <FileCode size={14} /> {f.name}
+                       </div>
+                    ))}
+                  </div>
+                )}
+
+                {cloudFiles.length > 0 && (
+                  <div style={{ minWidth: '150px' }}>
+                    <div style={{ color: 'var(--color-text-primary)', marginBottom: '16px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      ☁️ Cloud Files
+                    </div>
+                    {cloudFiles.slice(0, 8).map(cf => (
+                       <div key={cf.id} onClick={() => openCloudFile(cf.id, cf.fileName)} style={{ cursor: 'pointer', padding: '6px 0', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-text-secondary)' }} className="recent-file-item">
+                         <FileCode size={14} color="#58a6ff" /> {cf.fileName}
                        </div>
                     ))}
                   </div>
@@ -1817,28 +2064,28 @@ function App() {
         <div className="context-menu" style={{ top: contextMenu.y, left: contextMenu.x }}>
           {contextMenu.type === 'explorer' ? (
             <>
-              <div className="context-menu-item" onClick={() => handleRename(contextMenu.file)}>
+              <div className="context-menu-item" onClick={(e) => { e.stopPropagation(); handleRename(contextMenu.file); }}>
                 <Edit2 size={14} style={{ display: 'inline', marginRight: '8px' }} /> Rename
               </div>
-              <div className="context-menu-item" onClick={() => handleDuplicate(contextMenu.file)}>
+              <div className="context-menu-item" onClick={(e) => { e.stopPropagation(); handleDuplicate(contextMenu.file); }}>
                 <Copy size={14} style={{ display: 'inline', marginRight: '8px' }} /> Duplicate
               </div>
               {activeWorkspaceId && contextMenu.file.type === 'file' && (
-                <div className="context-menu-item" onClick={() => toggleFavoriteFile(contextMenu.file)}>
+                <div className="context-menu-item" onClick={(e) => { e.stopPropagation(); toggleFavoriteFile(contextMenu.file); }}>
                   <Pin size={14} style={{ display: 'inline', marginRight: '8px' }} /> Toggle Favorite
                 </div>
               )}
-              <div className="context-menu-item" onClick={() => handleDelete(contextMenu.file)} style={{ color: '#ff7b72' }}>
+              <div className="context-menu-item" onClick={(e) => { e.stopPropagation(); handleDelete(contextMenu.file); }} style={{ color: '#ff7b72' }}>
                 <Trash2 size={14} style={{ display: 'inline', marginRight: '8px' }} /> Delete
               </div>
             </>
           ) : (
             <>
-              <div className="context-menu-item" onClick={() => togglePin(contextMenu.file)}>
+              <div className="context-menu-item" onClick={(e) => { e.stopPropagation(); togglePin(contextMenu.file); }}>
                 {contextMenu.file.isPinned ? <PinOff size={14} style={{ display: 'inline', marginRight: '8px' }} /> : <Pin size={14} style={{ display: 'inline', marginRight: '8px' }} />} 
                 {contextMenu.file.isPinned ? 'Unpin Tab' : 'Pin Tab'}
               </div>
-              <div className="context-menu-item" onClick={() => { closeTab(contextMenu.file.id); setContextMenu(null); }}>
+              <div className="context-menu-item" onClick={(e) => { e.stopPropagation(); closeTab(contextMenu.file.id); setContextMenu(null); }}>
                 <X size={14} style={{ display: 'inline', marginRight: '8px' }} /> Close Tab
               </div>
             </>
