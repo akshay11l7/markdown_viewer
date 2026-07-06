@@ -4,8 +4,12 @@ import {
   CheckCircle2, AlertCircle, Layout, FileEdit, FileText, FolderOpen, FilePlus, FolderPlus, RefreshCw, Copy, Trash2, Edit2, Pin, PinOff, AlignLeft, Download, Sparkles, Bot, CloudUpload
 } from 'lucide-react';
 import { ChatPanel } from './components/ai/ChatPanel';
+import { ExplainPopup } from './components/ai/ExplainPopup';
+import { AIActionBar } from './components/ai/AIActionBar';
+import { SummaryCard } from './components/ai/SummaryCard';
 import { Auth } from './components/Auth';
-import { askAI } from './services/ai';
+import { useAIStore } from './store/aiStore';
+import type { PromptType } from './types/ai';
 import ReactMarkdown from 'react-markdown';
 import { Editor } from '@monaco-editor/react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
@@ -321,6 +325,20 @@ function App() {
   rootDirHandleRef.current = rootDirHandle;
   const editorRef = useRef<any>(null);
 
+  // AI State
+  const [showAIActionBar, setShowAIActionBar] = useState(false);
+  const [showSummaryCard, setShowSummaryCard] = useState(false);
+  const [explainPopup, setExplainPopup] = useState<{ text: string; position: { x: number; y: number } } | null>(null);
+  const aiStore = useAIStore();
+
+  const activeFile = openFiles.find(f => f.id === activeFileId);
+  const activeFileContent = activeFile?.content || '';
+  const activeFileName = activeFile?.name || '';
+
+  useEffect(() => {
+    aiStore.setDocument(activeFileContent, activeFileName);
+  }, [activeFileContent, activeFileName]);
+
   // WebSocket Collaboration State
   const wsRef = useRef<WebSocket | null>(null);
   const isUpdatingFromWs = useRef(false);
@@ -611,6 +629,10 @@ function App() {
       } else if (e.ctrlKey && e.key.toLowerCase() === 'p') {
         e.preventDefault();
         setActiveSidebar('search');
+      } else if (e.ctrlKey && e.key.toLowerCase() === 'i') {
+        e.preventDefault();
+        setShowAIActionBar(prev => !prev);
+        setActiveSidebar('ai');
       } else if (e.ctrlKey && e.key.toLowerCase() === 'w') {
         e.preventDefault();
         if (activeFileIdRef.current) {
@@ -1305,6 +1327,14 @@ function App() {
     editor.onDidChangeCursorPosition((e: any) => {
       setCursorPos({ line: e.position.lineNumber, column: e.position.column });
     });
+    editor.onDidChangeCursorSelection((e: any) => {
+      const selection = e.selection;
+      const model = editor.getModel();
+      if (model && selection) {
+        const text = model.getValueInRange(selection);
+        aiStore.setSelectedText(text);
+      }
+    });
     
     // Add AI actions to context menu
     const aiActions = [
@@ -1322,33 +1352,70 @@ function App() {
         contextMenuOrder: 1.5 + (index * 0.1),
         run: async (ed: any) => {
           const selection = ed.getSelection();
-          const text = ed.getModel().getValueInRange(selection);
-          if (!text) {
+          const selectedText = ed.getModel().getValueInRange(selection);
+          if (!selectedText) {
              alert('Please select some text first.');
              return;
           }
           
-          setActiveSidebar('ai');
+          // For explain, show the floating popup
+          if (item.action === 'explain') {
+            const coords = ed.getScrolledVisiblePosition(selection.getStartPosition());
+            const editorDom = ed.getDomNode();
+            const rect = editorDom?.getBoundingClientRect();
+            setExplainPopup({
+              text: selectedText,
+              position: {
+                x: (rect?.left || 0) + (coords?.left || 100),
+                y: (rect?.top || 0) + (coords?.top || 100),
+              },
+            });
+            return;
+          }
           
-          // Actually we would like to pass this to the ChatPanel. 
-          // For now, we can show an alert or a popup if we want to replace inline, 
-          // or we can simulate doing it via the AI service and replacing the text.
+          // For improve/grammar/translate, send to AI chat and replace inline
+          setActiveSidebar('ai');
+          aiStore.setSelectedText(selectedText);
+          
+          const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
+          const token = localStorage.getItem('token') || '';
           try {
-            const oldText = text;
-            const replacement = await askAI(item.action as any, oldText);
-            
-            // For summarize/explain, maybe we don't replace text, just show it.
-            if (item.action === 'explain') {
-               alert(replacement);
-            } else {
-               ed.executeEdits('ai-service', [{
-                  range: selection,
-                  text: replacement,
-                  forceMoveMarkers: true
-               }]);
+            const response = await fetch(`${API_BASE}/api/ai/${item.action}`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                text: selectedText,
+                context: {
+                  currentMarkdown: ed.getValue(),
+                  fileName: openFilesRef.current.find((f: any) => f.id === activeFileIdRef.current)?.name || 'Untitled.md',
+                  selectedText,
+                  currentHeading: '',
+                  cursorLocation: { line: selection.startLineNumber, column: selection.startColumn },
+                  workspaceName: 'Workspace',
+                  recentPrompts: [],
+                  conversationHistory: [],
+                },
+              }),
+            });
+            if (!response.ok) {
+              const errData = await response.json().catch(() => ({}));
+              alert(`AI Error: ${errData.error || response.statusText}`);
+              return;
             }
-          } catch (e) {
-            console.error(e);
+            const data = await response.json();
+            if (data.content) {
+              ed.executeEdits('ai-service', [{
+                range: selection,
+                text: data.content,
+                forceMoveMarkers: true,
+              }]);
+            }
+          } catch (err) {
+            console.error('AI action failed:', err);
+            alert('AI request failed. Make sure the backend is running.');
           }
         }
       });
@@ -1816,6 +1883,24 @@ function App() {
             <ChatPanel 
               onClose={() => setActiveSidebar('explorer')} 
               documentContent={openFiles.find(f => f.id === activeFileId)?.content || ''}
+              fileName={openFiles.find(f => f.id === activeFileId)?.name || 'Untitled.md'}
+              onInsertContent={(content) => {
+                if (editorRef.current) {
+                  const position = editorRef.current.getPosition();
+                  if (position) {
+                    editorRef.current.executeEdits('ai-insert', [{
+                      range: {
+                        startLineNumber: position.lineNumber,
+                        startColumn: position.column,
+                        endLineNumber: position.lineNumber,
+                        endColumn: position.column,
+                      },
+                      text: '\n' + content + '\n',
+                      forceMoveMarkers: true,
+                    }]);
+                  }
+                }
+              }}
             />
           ) : null}
         </div>
@@ -2190,6 +2275,55 @@ function App() {
         </div>
       )}
       
+      {/* AI Explain Popup */}
+      {explainPopup && (
+        <ExplainPopup
+          text={explainPopup.text}
+          position={explainPopup.position}
+          onClose={() => setExplainPopup(null)}
+          onInsert={(content) => {
+            if (editorRef.current) {
+              const position = editorRef.current.getPosition();
+              if (position) {
+                editorRef.current.executeEdits('ai-explain-insert', [{
+                  range: {
+                    startLineNumber: position.lineNumber,
+                    startColumn: position.column,
+                    endLineNumber: position.lineNumber,
+                    endColumn: position.column,
+                  },
+                  text: '\n\n' + content + '\n',
+                  forceMoveMarkers: true,
+                }]);
+              }
+            }
+            setExplainPopup(null);
+          }}
+        />
+      )}
+
+      {/* AI Action Bar (Ctrl+I) */}
+      <AIActionBar
+        visible={showAIActionBar}
+        onClose={() => setShowAIActionBar(false)}
+        hasSelection={!!aiStore.selectedText}
+        onAction={(action: PromptType, message: string) => {
+          setShowAIActionBar(false);
+          if (action === 'summary') {
+            setShowSummaryCard(true);
+          } else {
+            setActiveSidebar('ai');
+            aiStore.sendMessage(message, action);
+          }
+        }}
+      />
+
+      {/* AI Summary Card Modal */}
+      <SummaryCard
+        visible={showSummaryCard}
+        onClose={() => setShowSummaryCard(false)}
+      />
+
       {/* Live Share Pending Guests Overlay */}
       {pendingGuests.length > 0 && (
         <div style={{ position: 'fixed', bottom: '24px', right: '24px', backgroundColor: 'var(--color-bg-primary)', padding: '16px', borderRadius: '8px', border: '1px solid var(--color-border)', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', zIndex: 3000 }}>

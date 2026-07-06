@@ -7,6 +7,7 @@ const mongoose = require('mongoose');
 require('dotenv').config();
 const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const aiRoutes = require('./ai-routes');
 
 // ─── S3 / Backblaze B2 Client ─────────────────────────────────────────────────
 const s3Client = new S3Client({
@@ -258,6 +259,9 @@ app.delete('/api/files/:fileId', authMiddleware, async (req, res) => {
     res.status(500).json({ error: 'Failed to delete file' });
   }
 });
+
+// ─── AI Routes (Grok API) ───────────────────────────────────────────────────────
+app.use('/api/ai', authMiddleware, aiRoutes);
 
 // ─── Presigned URL for Image Upload (drag & drop) ──────────────────────────────
 app.post('/api/upload-url', authMiddleware, async (req, res) => {
