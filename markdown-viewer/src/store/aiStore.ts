@@ -176,7 +176,7 @@ export const useAIStore = create<AIStore>((set, get) => ({
 
     // Stream the response
     const cancel = aiService.chat(
-      '', // not used directly, body contains everything
+      message,
       context,
       {
         onStart: () => {
