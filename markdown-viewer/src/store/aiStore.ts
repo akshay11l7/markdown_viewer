@@ -39,7 +39,7 @@ export const useAIStore = create<AIStore>((set, get) => ({
       id: 'welcome',
       role: 'assistant',
       content:
-        'Hello! I\'m your AI assistant powered by Grok. I can summarize, explain, translate, generate diagrams, and much more. Ask me anything about your document!',
+        'Hello! I\'m your AI assistant powered by Gemini. I can summarize, explain, translate, generate diagrams, and much more. Ask me anything about your document!',
       timestamp: Date.now(),
     },
   ],
@@ -345,7 +345,7 @@ export const useAIStore = create<AIStore>((set, get) => ({
           id: 'welcome',
           role: 'assistant',
           content:
-            'Hello! I\'m your AI assistant powered by Grok. I can summarize, explain, translate, generate diagrams, and much more. Ask me anything about your document!',
+            'Hello! I\'m your AI assistant powered by Gemini. I can summarize, explain, translate, generate diagrams, and much more. Ask me anything about your document!',
           timestamp: Date.now(),
         },
       ],

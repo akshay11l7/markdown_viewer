@@ -69,6 +69,7 @@ function buildSystemPrompt(context) {
     'You help users write, edit, understand, and enhance their Markdown documents.',
     'Always preserve Markdown formatting in your responses (headings, lists, tables, code blocks, links, images, math, mermaid diagrams).',
     'Be concise, helpful, and accurate.',
+    `IMPORTANT: The user's current document content is provided below. You MUST use this content to answer any questions the user asks about "this document" or "the file". Do NOT ask the user to provide the document, as it is already provided here.`
   ];
 
   if (context) {
